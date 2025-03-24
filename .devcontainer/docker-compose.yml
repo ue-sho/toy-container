@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  dev:
+    build:
+      context: ..
+      dockerfile: .devcontainer/Dockerfile
+    volumes:
+      - ..:/workspaces/toy-container:cached
+      - gradle-cache:/home/vscode/.gradle
+    command: sleep infinity
+    privileged: true  # Required for container implementation
+    cap_add:
+      - SYS_ADMIN  # Required for namespace operations
+    security_opt:
+      - seccomp:unconfined  # Required for container operations
+
+volumes:
+  gradle-cache:

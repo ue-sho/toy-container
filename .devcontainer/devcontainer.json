@@ -1,0 +1,28 @@
+{
+    "name": "Toy Container Development",
+    "dockerComposeFile": "docker-compose.yml",
+    "service": "dev",
+    "workspaceFolder": "/workspaces/toy-container",
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "vscjava.vscode-java-pack",
+                "fwcd.kotlin",
+                "mathiasfrohlich.kotlin",
+                "ms-vscode.cpptools",
+                "ms-vscode.cmake-tools",
+                "github.copilot"
+            ],
+            "settings": {
+                "java.configuration.updateBuildConfiguration": "automatic",
+                "kotlin.languageServer.enabled": true,
+                "kotlin.debugAdapter.enabled": true
+            }
+        }
+    },
+    "remoteUser": "vscode",
+    "features": {
+        "ghcr.io/devcontainers/features/git:1": {},
+        "ghcr.io/devcontainers/features/github-cli:1": {}
+    }
+}
