@@ -1,7 +1,9 @@
 package com.toycontainer
 
+import com.toycontainer.cgroups.CgroupManager
 import java.lang.ProcessBuilder
 import java.lang.RuntimeException
+import java.util.UUID
 
 class Container {
     companion object {
@@ -17,6 +19,17 @@ class Container {
             println("Running ${args.joinToString(" ")}")
 
             val command = args.firstOrNull() ?: throw RuntimeException("Command is required")
+
+            // Generate unique container ID
+            val containerId = UUID.randomUUID().toString()
+
+            // Initialize cgroup manager
+            val cgroupManager = CgroupManager(containerId)
+            cgroupManager.initialize()
+
+            // Set resource limits (example: 512MB memory, 50% CPU)
+            cgroupManager.setMemoryLimit(512 * 1024 * 1024) // 512MB
+            cgroupManager.setCpuQuota(50000) // 50% CPU
 
             /*
              * Note: Ideally, we should use direct syscalls with clone flags (CLONE_NEWUTS | CLONE_NEWPID | CLONE_NEWNS)
@@ -48,12 +61,18 @@ class Container {
                 val process = processBuilder.start()
                 println("Container process started with PID: ${process.pid()}")
 
+                // Add process to cgroup
+                cgroupManager.addProcess(process.pid())
+
                 val exitCode = process.waitFor()
                 if (exitCode != 0) {
                     throw RuntimeException("Container process exited with code $exitCode")
                 }
             } catch (e: Exception) {
                 throw RuntimeException("Failed to run container process", e)
+            } finally {
+                // Cleanup cgroup resources
+                cgroupManager.cleanup()
             }
         }
     }
