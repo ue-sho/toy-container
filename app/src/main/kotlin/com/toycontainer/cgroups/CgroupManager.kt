@@ -221,7 +221,25 @@ class CgroupManager(private val containerName: String) {
             val checkExitCode = checkProcess.waitFor()
             if (checkExitCode != 0) {
                 println("Error: Process with PID $pid does not exist or cannot be accessed")
-                return false
+
+                // Try checking with sudo as a fallback
+                println("Trying sudo to check process...")
+                val sudoCheckProcess = ProcessBuilder(
+                    "sudo",
+                    "ps",
+                    "-p",
+                    pid.toString()
+                ).redirectOutput(ProcessBuilder.Redirect.PIPE)
+                 .redirectError(ProcessBuilder.Redirect.PIPE)
+                 .start()
+
+                val sudoCheckExitCode = sudoCheckProcess.waitFor()
+                if (sudoCheckExitCode != 0) {
+                    println("Error: Process still not found with sudo. The process may be in a different namespace.")
+                    return false
+                }
+
+                println("Process found using sudo")
             }
 
             // Check if file exists
@@ -244,65 +262,54 @@ class CgroupManager(private val containerName: String) {
                 return false
             }
 
-            // Check current cgroup of the process
-            val currentCgroupProcess = ProcessBuilder(
-                "cat",
-                "/proc/$pid/cgroup"
-            ).redirectOutput(ProcessBuilder.Redirect.PIPE)
-             .redirectError(ProcessBuilder.Redirect.PIPE)
-             .start()
-
-            val currentCgroup = currentCgroupProcess.inputStream.bufferedReader().readText()
-            println("Current cgroup of process $pid: $currentCgroup")
-
-            // First try to use cgroup migration via a direct write
-            val process = ProcessBuilder(
+            // Try a different way to add the process to cgroup
+            val alternativeProcess = ProcessBuilder(
                 "sudo",
                 "sh",
                 "-c",
-                "echo $pid > $procsFile"
-            ).redirectError(ProcessBuilder.Redirect.PIPE)
+                "echo $pid > $procsFile || echo 'Failed first approach, trying different methods...'"
+            ).redirectOutput(ProcessBuilder.Redirect.INHERIT)
+             .redirectError(ProcessBuilder.Redirect.INHERIT)
              .start()
 
-            val exitCode = process.waitFor()
-            val errorOutput = process.errorStream.bufferedReader().readText()
+            alternativeProcess.waitFor()
 
-            if (exitCode != 0) {
-                println("Warning: Direct cgroup migration failed. Exit code: $exitCode")
-                if (errorOutput.isNotEmpty()) {
-                    println("Error details: $errorOutput")
-                }
+            // Verify if process was actually added to cgroup
+            val verifyProcess = ProcessBuilder(
+                "sudo",
+                "cat",
+                procsFile
+            ).redirectOutput(ProcessBuilder.Redirect.PIPE)
+             .start()
 
-                // Fallback to alternative approach using the cgroup command line tools if available
-                println("Trying alternative approach...")
-                val altProcess = ProcessBuilder(
+            val verifyOutput = verifyProcess.inputStream.bufferedReader().readText().trim()
+            return if (verifyOutput.contains(pid.toString())) {
+                println("Successfully added PID $pid to cgroup (verified)")
+                true
+            } else {
+                // Use multiple alternative approaches
+                println("PID not found in cgroup, trying alternative methods...")
+
+                // Try using nsenter if available
+                val nsenterProcess = ProcessBuilder(
                     "sudo",
                     "sh",
                     "-c",
-                    "if command -v cgclassify >/dev/null 2>&1; then " +
-                    "  cgclassify -g $containerName $pid; " +
-                    "elif command -v cgexec >/dev/null 2>&1; then " +
-                    "  echo 'Using cgexec...'; " +
-                    "  pgrep -P $pid | xargs -I{} cgexec -g $containerName {}; " +
+                    "if command -v nsenter >/dev/null 2>&1; then " +
+                    "  echo 'Using nsenter...'; " +
+                    "  nsenter -t $pid -m -p -n -u -i sh -c \"echo $pid > $procsFile\"; " +
+                    "elif command -v cgclassify >/dev/null 2>&1; then " +
+                    "  echo 'Using cgclassify...'; " +
+                    "  cgclassify -g ${containerPath.substringAfterLast('/')} $pid; " +
                     "else " +
-                    "  echo 'No cgroup tools available'; " +
+                    "  echo 'No alternative methods available'; " +
                     "  exit 1; " +
                     "fi"
                 ).redirectOutput(ProcessBuilder.Redirect.INHERIT)
                  .redirectError(ProcessBuilder.Redirect.INHERIT)
                  .start()
 
-                val altExitCode = altProcess.waitFor()
-                if (altExitCode != 0) {
-                    println("Warning: Alternative approach also failed")
-                    return false
-                } else {
-                    println("Successfully added PID $pid to cgroup using alternative approach")
-                    return true
-                }
-            } else {
-                println("Successfully added PID $pid to cgroup")
-                return true
+                return nsenterProcess.waitFor() == 0
             }
         } catch (e: Exception) {
             println("Warning: Failed to add process to cgroup: ${e.message}")

@@ -156,9 +156,12 @@ class Container {
                     "--fork",    // Fork new process
                     "--mount-proc", // Mount /proc filesystem
                     "--kill-child", // Kill the child process when the parent dies
-                    "chroot",    // Change root directory
-                    fsManager.getContainerRoot(),
-                    "/container_init.sh"
+                    // Execute a wrapper script that first writes its own PID to a file
+                    // before chrooting and executing the container command
+                    "bash",
+                    "-c",
+                    "echo \$\$ > ${fsManager.getContainerRoot()}/container.pid && " +
+                    "chroot ${fsManager.getContainerRoot()} /container_init.sh"
                 )
                     .redirectInput(ProcessBuilder.Redirect.INHERIT)
                     .redirectOutput(ProcessBuilder.Redirect.INHERIT)
@@ -171,12 +174,29 @@ class Container {
                  */
                 try {
                     val process = processBuilder.start()
-                    println("Container process started with PID: ${process.pid()}")
+                    println("Container process started with parent PID: ${process.pid()}")
 
-                    // Add process to cgroup
-                    val cgroupResult = cgroupManager.addProcess(process.pid())
-                    if (!cgroupResult) {
-                        println("Warning: Failed to add process to cgroup. Container will run without resource limits.")
+                    // Wait a short time to allow the container process to write its PID
+                    Thread.sleep(200)
+
+                    // Read PID from file
+                    val pidFile = File("${fsManager.getContainerRoot()}/container.pid")
+                    if (pidFile.exists()) {
+                        val containerPid = pidFile.readText().trim().toLong()
+                        println("Container main process PID from file: $containerPid")
+
+                        // Add process to cgroup
+                        val cgroupResult = cgroupManager.addProcess(containerPid)
+                        if (!cgroupResult) {
+                            println("Warning: Failed to add process to cgroup. Container will run without resource limits.")
+                        }
+                    } else {
+                        println("Warning: Could not find container PID file. Will try to add parent process instead.")
+                        // Fallback to using the parent process PID
+                        val cgroupResult = cgroupManager.addProcess(process.pid())
+                        if (!cgroupResult) {
+                            println("Warning: Failed to add process to cgroup. Container will run without resource limits.")
+                        }
                     }
 
                     val exitCode = process.waitFor()
