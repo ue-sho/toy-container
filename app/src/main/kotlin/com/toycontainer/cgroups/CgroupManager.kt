@@ -202,19 +202,60 @@ class CgroupManager(private val containerName: String) {
     /**
      * Add a process to the container's cgroup.
      * @param pid Process ID to add
+     * @return True if the process was added successfully, false otherwise
      */
-    fun addProcess(pid: Long) {
+    fun addProcess(pid: Long): Boolean {
         try {
             val procsFile = "$containerPath/cgroup.procs"
             println("Attempting to add PID $pid to cgroup at $procsFile")
 
+            // First check if process exists
+            val checkProcess = ProcessBuilder(
+                "ps",
+                "-p",
+                pid.toString()
+            ).redirectOutput(ProcessBuilder.Redirect.PIPE)
+             .redirectError(ProcessBuilder.Redirect.PIPE)
+             .start()
+
+            val checkExitCode = checkProcess.waitFor()
+            if (checkExitCode != 0) {
+                println("Error: Process with PID $pid does not exist or cannot be accessed")
+                return false
+            }
+
             // Check if file exists
             if (!File(procsFile).exists()) {
                 println("Error: cgroup.procs file does not exist at $procsFile")
-                return
+
+                // Try to diagnose the issue
+                val lsProcess = ProcessBuilder(
+                    "sudo",
+                    "ls",
+                    "-la",
+                    containerPath
+                ).redirectOutput(ProcessBuilder.Redirect.PIPE)
+                 .start()
+
+                val lsOutput = lsProcess.inputStream.bufferedReader().readText()
+                println("Directory contents of $containerPath:")
+                println(lsOutput)
+
+                return false
             }
 
-            // Use sudo to write to the cgroup.procs file
+            // Check current cgroup of the process
+            val currentCgroupProcess = ProcessBuilder(
+                "cat",
+                "/proc/$pid/cgroup"
+            ).redirectOutput(ProcessBuilder.Redirect.PIPE)
+             .redirectError(ProcessBuilder.Redirect.PIPE)
+             .start()
+
+            val currentCgroup = currentCgroupProcess.inputStream.bufferedReader().readText()
+            println("Current cgroup of process $pid: $currentCgroup")
+
+            // First try to use cgroup migration via a direct write
             val process = ProcessBuilder(
                 "sudo",
                 "sh",
@@ -227,16 +268,46 @@ class CgroupManager(private val containerName: String) {
             val errorOutput = process.errorStream.bufferedReader().readText()
 
             if (exitCode != 0) {
-                println("Warning: Failed to add process to cgroup. Exit code: $exitCode")
+                println("Warning: Direct cgroup migration failed. Exit code: $exitCode")
                 if (errorOutput.isNotEmpty()) {
                     println("Error details: $errorOutput")
                 }
+
+                // Fallback to alternative approach using the cgroup command line tools if available
+                println("Trying alternative approach...")
+                val altProcess = ProcessBuilder(
+                    "sudo",
+                    "sh",
+                    "-c",
+                    "if command -v cgclassify >/dev/null 2>&1; then " +
+                    "  cgclassify -g $containerName $pid; " +
+                    "elif command -v cgexec >/dev/null 2>&1; then " +
+                    "  echo 'Using cgexec...'; " +
+                    "  pgrep -P $pid | xargs -I{} cgexec -g $containerName {}; " +
+                    "else " +
+                    "  echo 'No cgroup tools available'; " +
+                    "  exit 1; " +
+                    "fi"
+                ).redirectOutput(ProcessBuilder.Redirect.INHERIT)
+                 .redirectError(ProcessBuilder.Redirect.INHERIT)
+                 .start()
+
+                val altExitCode = altProcess.waitFor()
+                if (altExitCode != 0) {
+                    println("Warning: Alternative approach also failed")
+                    return false
+                } else {
+                    println("Successfully added PID $pid to cgroup using alternative approach")
+                    return true
+                }
             } else {
                 println("Successfully added PID $pid to cgroup")
+                return true
             }
         } catch (e: Exception) {
             println("Warning: Failed to add process to cgroup: ${e.message}")
             e.printStackTrace()
+            return false
         }
     }
 

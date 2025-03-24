@@ -174,7 +174,10 @@ class Container {
                     println("Container process started with PID: ${process.pid()}")
 
                     // Add process to cgroup
-                    cgroupManager.addProcess(process.pid())
+                    val cgroupResult = cgroupManager.addProcess(process.pid())
+                    if (!cgroupResult) {
+                        println("Warning: Failed to add process to cgroup. Container will run without resource limits.")
+                    }
 
                     val exitCode = process.waitFor()
                     if (exitCode != 0) {
