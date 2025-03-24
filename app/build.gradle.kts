@@ -30,6 +30,12 @@ dependencies {
     // This dependency is used by the application.
     implementation(libs.guava)
     implementation(kotlin("stdlib"))
+
+    // JSON processing
+    implementation("com.google.code.gson:gson:2.10.1")
+
+    // Archive handling
+    implementation("org.apache.commons:commons-compress:1.24.0")
 }
 
 // Apply a specific Java toolchain to ease working on different environments.
