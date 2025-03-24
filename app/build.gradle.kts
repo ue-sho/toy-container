@@ -29,6 +29,7 @@ dependencies {
 
     // This dependency is used by the application.
     implementation(libs.guava)
+    implementation(kotlin("stdlib"))
 }
 
 // Apply a specific Java toolchain to ease working on different environments.
@@ -40,22 +41,10 @@ java {
 
 application {
     // Define the main class for the application.
-    mainClass = "org.example.AppKt"
+    mainClass.set("com.toycontainer.Container")
 }
 
 tasks.named<Test>("test") {
     // Use JUnit Platform for unit tests.
     useJUnitPlatform()
-}
-
-android {
-    externalNativeBuild {
-        cmake {
-            path = file("src/main/cpp/CMakeLists.txt")
-        }
-    }
-}
-
-dependencies {
-    implementation(kotlin("stdlib"))
 }
