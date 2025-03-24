@@ -55,10 +55,31 @@ class ImageStorage {
 
     init {
         // Create necessary directories
-        File(baseDir).mkdirs()
-        File(layersDir).mkdirs()
-        File(metadataDir).mkdirs()
-        File(tempDir).mkdirs()
+        runCommand("sudo", "mkdir", "-p", baseDir)
+        runCommand("sudo", "mkdir", "-p", layersDir)
+        runCommand("sudo", "mkdir", "-p", metadataDir)
+        runCommand("sudo", "mkdir", "-p", tempDir)
+
+        // Set permissions to allow write access
+        runCommand("sudo", "chmod", "-R", "777", baseDir)
+    }
+
+    /**
+     * Run a command with the given arguments.
+     * @param command The command to run
+     * @param args The arguments for the command
+     * @return True if the command succeeded, false otherwise
+     */
+    private fun runCommand(vararg command: String): Boolean {
+        try {
+            val process = ProcessBuilder(*command)
+                .redirectError(ProcessBuilder.Redirect.INHERIT)
+                .start()
+            return process.waitFor() == 0
+        } catch (e: Exception) {
+            println("Warning: Failed to run command: ${command.joinToString(" ")}")
+            return false
+        }
     }
 
     /**

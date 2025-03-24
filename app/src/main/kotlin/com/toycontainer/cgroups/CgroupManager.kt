@@ -1,6 +1,7 @@
 package com.toycontainer.cgroups
 
 import java.io.File
+import java.lang.ProcessBuilder
 import java.lang.RuntimeException
 
 /**
@@ -9,8 +10,9 @@ import java.lang.RuntimeException
  * Note: Requires root privileges to manage cgroups.
  */
 class CgroupManager(private val containerName: String) {
+    // Use the root cgroup directory directly instead of creating a subdirectory
     private val cgroupBasePath = "/sys/fs/cgroup"
-    private val containerPath = "$cgroupBasePath/toy-containers/$containerName"
+    private val containerPath = "$cgroupBasePath/$containerName"
 
     /**
      * Initialize cgroup for the container.
@@ -25,21 +27,52 @@ class CgroupManager(private val containerName: String) {
 
             // Create container cgroup directory structure
             val containerDir = File(containerPath)
-            containerDir.mkdirs()
 
-            if (!containerDir.exists()) {
-                throw RuntimeException("Failed to create cgroup directory at $containerPath")
+            // Use sudo to create the cgroup directory with proper permissions
+            val createDirProcess = ProcessBuilder(
+                "sudo",
+                "mkdir",
+                "-p",
+                containerPath
+            ).start()
+
+            if (createDirProcess.waitFor() != 0) {
+                println("Warning: Failed to create cgroup directory at $containerPath")
+                return
             }
 
-            // Enable memory and cpu controllers
+            // Enable memory and cpu controllers using sudo
             try {
-                File("$containerPath/cgroup.subtree_control").writeText("+memory +cpu")
+                // Check available controllers
+                val controllersFile = File("$cgroupBasePath/cgroup.controllers")
+                if (controllersFile.exists()) {
+                    val availableControllers = controllersFile.readText().trim().split(" ")
+
+                    // Only enable controllers that are available
+                    val enableControllers = mutableListOf<String>()
+                    if ("memory" in availableControllers) enableControllers.add("+memory")
+                    if ("cpu" in availableControllers) enableControllers.add("+cpu")
+
+                    if (enableControllers.isNotEmpty()) {
+                        val enableProcess = ProcessBuilder(
+                            "sudo",
+                            "sh",
+                            "-c",
+                            "echo '${enableControllers.joinToString(" ")}' > $cgroupBasePath/cgroup.subtree_control"
+                        ).start()
+
+                        if (enableProcess.waitFor() != 0) {
+                            println("Warning: Failed to enable controllers")
+                        }
+                    }
+                }
             } catch (e: Exception) {
                 println("Warning: Failed to enable controllers: ${e.message}")
                 // Continue execution as some systems might have different controller configurations
             }
         } catch (e: Exception) {
-            throw RuntimeException("Failed to initialize cgroup: ${e.message}")
+            println("Warning: Failed to initialize cgroup: ${e.message}")
+            // Continue execution to allow the container to run without cgroup limitations
         }
     }
 
@@ -49,7 +82,18 @@ class CgroupManager(private val containerName: String) {
      */
     fun setMemoryLimit(limitInBytes: Long) {
         try {
-            File("$containerPath/memory.max").writeText(limitInBytes.toString())
+            val memoryFile = "$containerPath/memory.max"
+            // Use sudo to write to the memory.max file
+            val process = ProcessBuilder(
+                "sudo",
+                "sh",
+                "-c",
+                "echo $limitInBytes > $memoryFile"
+            ).start()
+
+            if (process.waitFor() != 0) {
+                println("Warning: Failed to set memory limit")
+            }
         } catch (e: Exception) {
             println("Warning: Failed to set memory limit: ${e.message}")
         }
@@ -62,7 +106,18 @@ class CgroupManager(private val containerName: String) {
      */
     fun setCpuQuota(cpuQuota: Long, cpuPeriod: Long = 100000) {
         try {
-            File("$containerPath/cpu.max").writeText("$cpuQuota $cpuPeriod")
+            val cpuFile = "$containerPath/cpu.max"
+            // Use sudo to write to the cpu.max file
+            val process = ProcessBuilder(
+                "sudo",
+                "sh",
+                "-c",
+                "echo '$cpuQuota $cpuPeriod' > $cpuFile"
+            ).start()
+
+            if (process.waitFor() != 0) {
+                println("Warning: Failed to set CPU quota")
+            }
         } catch (e: Exception) {
             println("Warning: Failed to set CPU quota: ${e.message}")
         }
@@ -74,7 +129,18 @@ class CgroupManager(private val containerName: String) {
      */
     fun addProcess(pid: Long) {
         try {
-            File("$containerPath/cgroup.procs").writeText(pid.toString())
+            val procsFile = "$containerPath/cgroup.procs"
+            // Use sudo to write to the cgroup.procs file
+            val process = ProcessBuilder(
+                "sudo",
+                "sh",
+                "-c",
+                "echo $pid > $procsFile"
+            ).start()
+
+            if (process.waitFor() != 0) {
+                println("Warning: Failed to add process to cgroup")
+            }
         } catch (e: Exception) {
             println("Warning: Failed to add process to cgroup: ${e.message}")
         }
@@ -85,7 +151,16 @@ class CgroupManager(private val containerName: String) {
      */
     fun cleanup() {
         try {
-            File(containerPath).deleteRecursively()
+            // Use sudo to remove the cgroup directory
+            val process = ProcessBuilder(
+                "sudo",
+                "rmdir",
+                containerPath
+            ).start()
+
+            if (process.waitFor() != 0) {
+                println("Warning: Failed to cleanup cgroup")
+            }
         } catch (e: Exception) {
             println("Warning: Failed to cleanup cgroup: ${e.message}")
         }

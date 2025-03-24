@@ -24,15 +24,47 @@ class FilesystemManager(private val containerId: String) {
      */
     fun initialize() {
         try {
-            // Create container root directory
-            File(containerRoot).mkdirs()
+            // Create container root directory with sudo to ensure proper permissions
+            val mkdirProcess = ProcessBuilder(
+                "sudo",
+                "mkdir",
+                "-p",
+                containerRoot
+            ).start()
+
+            if (mkdirProcess.waitFor() != 0) {
+                throw RuntimeException("Failed to create container root directory")
+            }
+
+            // Change ownership of the container root to current user
+            val chownProcess = ProcessBuilder(
+                "sudo",
+                "chown",
+                "${System.getProperty("user.name")}:",
+                containerRoot
+            ).start()
+
+            if (chownProcess.waitFor() != 0) {
+                println("Warning: Failed to change ownership of container root directory")
+            }
 
             // Create basic directory structure
             listOf(
-                "bin", "etc", "lib", "lib64", "usr", "sbin",
+                "bin", "etc", "lib", "usr", "sbin",
                 "proc", "sys", "dev", "tmp", "run", "var", "home"
             ).forEach { dir ->
-                File("$containerRoot/$dir").mkdirs()
+                val dirPath = "$containerRoot/$dir"
+                File(dirPath).mkdirs()
+
+                // Set appropriate permissions on directories
+                File(dirPath).setExecutable(true, false)
+                File(dirPath).setReadable(true, false)
+                File(dirPath).setWritable(true, false)
+            }
+
+            // Check if /lib64 exists on host, only create it if it exists
+            if (File("/lib64").exists()) {
+                File("$containerRoot/lib64").mkdirs()
             }
 
             // Create minimal filesystem structure
@@ -50,9 +82,14 @@ class FilesystemManager(private val containerId: String) {
      */
     private fun setupMinimalFilesystem() {
         // Bind mount essential directories from host
-        listOf(
-            "bin", "etc", "lib", "lib64", "usr", "sbin", "var"
-        ).forEach { dir ->
+        val essentialDirs = mutableListOf("bin", "etc", "lib", "usr", "sbin", "var")
+
+        // Add lib64 only if it exists on the host
+        if (File("/lib64").exists()) {
+            essentialDirs.add("lib64")
+        }
+
+        essentialDirs.forEach { dir ->
             bindMount("/$dir", "$containerRoot/$dir")
         }
     }
@@ -69,7 +106,9 @@ class FilesystemManager(private val containerId: String) {
         }
 
         try {
+            // Use sudo to perform the mount operation
             val processBuilder = ProcessBuilder(
+                "sudo",
                 "mount",
                 "--bind",
                 source,
@@ -94,6 +133,7 @@ class FilesystemManager(private val containerId: String) {
         mountPoints.forEach { (point, fsType) ->
             try {
                 val processBuilder = ProcessBuilder(
+                    "sudo",
                     "mount",
                     "-t",
                     fsType,
@@ -125,6 +165,7 @@ class FilesystemManager(private val containerId: String) {
             mountPoints.keys.reversed().forEach { point ->
                 try {
                     val process = ProcessBuilder(
+                        "sudo",
                         "umount",
                         "-f",
                         "$containerRoot/$point"
@@ -136,11 +177,17 @@ class FilesystemManager(private val containerId: String) {
             }
 
             // Unmount bind mounts in reverse order
-            listOf(
-                "var", "sbin", "usr", "lib64", "lib", "etc", "bin"
-            ).forEach { dir ->
+            val essentialDirs = mutableListOf("var", "sbin", "usr", "lib", "etc", "bin")
+
+            // Add lib64 only if it exists on the host
+            if (File("/lib64").exists()) {
+                essentialDirs.add(0, "lib64")  // Add at the beginning to unmount first
+            }
+
+            essentialDirs.forEach { dir ->
                 try {
                     val process = ProcessBuilder(
+                        "sudo",
                         "umount",
                         "-f",
                         "$containerRoot/$dir"
@@ -152,7 +199,13 @@ class FilesystemManager(private val containerId: String) {
             }
 
             // Remove container root directory
-            File(containerRoot).deleteRecursively()
+            val process = ProcessBuilder(
+                "sudo",
+                "rm",
+                "-rf",
+                containerRoot
+            ).start()
+            process.waitFor()
         } catch (e: Exception) {
             println("Warning: Failed to cleanup container filesystem: ${e.message}")
         }

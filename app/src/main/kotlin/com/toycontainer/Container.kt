@@ -111,6 +111,7 @@ class Container {
                  */
                 val scriptPath = "${fsManager.getContainerRoot()}/container_init.sh"
 
+                // Write the script with bash she-bang to ensure compatibility
                 File(scriptPath).writeText("""
                     #!/bin/bash
                     echo "Container initializing..."
@@ -126,14 +127,28 @@ class Container {
 
                     echo "Filesystems mounted"
 
+                    # Make sure the command has execute permissions
+                    chmod +x $command
+
                     # Execute the command
                     exec $command ${commandArgs.drop(1).joinToString(" ")}
                 """.trimIndent())
 
-                File(scriptPath).setExecutable(true)
+                // Make the script executable
+                val chmodProcess = ProcessBuilder(
+                    "sudo",
+                    "chmod",
+                    "+x",
+                    scriptPath
+                ).start()
+
+                if (chmodProcess.waitFor() != 0) {
+                    throw RuntimeException("Failed to make container init script executable")
+                }
 
                 // Setup unshare command with all required namespaces
                 val processBuilder = ProcessBuilder(
+                    "sudo",
                     "unshare",
                     "--pid",     // Separate PID namespace
                     "--uts",     // Separate UTS namespace
